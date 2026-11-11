@@ -1,18 +1,14 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { createSkirmish } from "@/game/server/api";
 import { unlockAudio } from "@/game/client/audio";
 import { useI18n } from "@/game/client/i18n";
-import { loadFx, loadSound, playerToken, saveFx, saveSound, type FxLevel, type Lang } from "@/game/client/prefs";
+import { loadFx, loadSound, saveFx, saveSound, type FxLevel, type Lang } from "@/game/client/prefs";
 
 export function HomeScreen() {
-  const navigate = useNavigate();
-  const { t, tx, lang, setLang } = useI18n();
+  const { t, lang, setLang } = useI18n();
   const [fx, setFx] = useState<FxLevel>("full");
   const [sound, setSound] = useState(true);
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const panelRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -39,23 +35,6 @@ export function HomeScreen() {
     setLang(next);
   }
 
-  async function skirmish() {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await createSkirmish({ data: { token: playerToken() } });
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
-      await navigate({ to: "/battle/$code", params: { code: res.view.code } });
-    } catch {
-      setError("演练没有创建成功");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <main className="safe-pad relative min-h-dvh overflow-x-hidden bg-void text-ivory">
       <div className="scene-prospero absolute inset-0 opacity-70" />
@@ -74,14 +53,12 @@ export function HomeScreen() {
           >
             {t.enterLobby}
           </Link>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void skirmish()}
-            className="min-h-12 rounded-md border border-steel bg-ink text-ivory disabled:opacity-40"
+          <Link
+            to="/muster"
+            className="flex min-h-12 items-center justify-center rounded-md border border-steel bg-ink text-ivory"
           >
-            {busy ? t.skirmishBusy : t.skirmish}
-          </button>
+            {t.skirmish}
+          </Link>
           <Link
             to="/roster"
             className="flex min-h-12 items-center justify-center rounded-md border border-line bg-panel text-gold"
@@ -92,7 +69,6 @@ export function HomeScreen() {
             {t.settings}
           </button>
         </div>
-        {error ? <p className="mt-3 text-sm text-blood">{tx(error)}</p> : null}
         {open ? (
           <section ref={panelRef} className="mt-2 rounded-md border border-line bg-panel p-4">
             <p className="text-sm text-ivory">{t.language}</p>

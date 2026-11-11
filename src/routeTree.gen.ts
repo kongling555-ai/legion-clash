@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LobbyRouteImport } from './routes/lobby'
+import { Route as MusterRouteImport } from './routes/muster'
 import { Route as RosterRouteImport } from './routes/roster'
 import { Route as BattleCodeRouteImport } from './routes/battle.$code'
 
@@ -22,6 +23,11 @@ const IndexRoute = IndexRouteImport.update({
 const LobbyRoute = LobbyRouteImport.update({
   id: '/lobby',
   path: '/lobby',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MusterRoute = MusterRouteImport.update({
+  id: '/muster',
+  path: '/muster',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RosterRoute = RosterRouteImport.update({
@@ -38,12 +44,14 @@ const BattleCodeRoute = BattleCodeRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/lobby': typeof LobbyRoute
+  '/muster': typeof MusterRoute
   '/roster': typeof RosterRoute
   '/battle/$code': typeof BattleCodeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/lobby': typeof LobbyRoute
+  '/muster': typeof MusterRoute
   '/roster': typeof RosterRoute
   '/battle/$code': typeof BattleCodeRoute
 }
@@ -51,20 +59,22 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/lobby': typeof LobbyRoute
+  '/muster': typeof MusterRoute
   '/roster': typeof RosterRoute
   '/battle/$code': typeof BattleCodeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/lobby' | '/roster' | '/battle/$code'
+  fullPaths: '/' | '/lobby' | '/muster' | '/roster' | '/battle/$code'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/lobby' | '/roster' | '/battle/$code'
-  id: '__root__' | '/' | '/lobby' | '/roster' | '/battle/$code'
+  to: '/' | '/lobby' | '/muster' | '/roster' | '/battle/$code'
+  id: '__root__' | '/' | '/lobby' | '/muster' | '/roster' | '/battle/$code'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LobbyRoute: typeof LobbyRoute
+  MusterRoute: typeof MusterRoute
   RosterRoute: typeof RosterRoute
   BattleCodeRoute: typeof BattleCodeRoute
 }
@@ -83,6 +93,13 @@ declare module '@tanstack/react-router' {
       path: '/lobby'
       fullPath: '/lobby'
       preLoaderRoute: typeof LobbyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/muster': {
+      id: '/muster'
+      path: '/muster'
+      fullPath: '/muster'
+      preLoaderRoute: typeof MusterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/roster': {
@@ -105,6 +122,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LobbyRoute: LobbyRoute,
+  MusterRoute: MusterRoute,
   RosterRoute: RosterRoute,
   BattleCodeRoute: BattleCodeRoute,
 }

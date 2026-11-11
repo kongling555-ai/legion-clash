@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { unlockAudio } from "@/game/client/audio";
 import { UI, cardName, translateText, type Dict } from "@/game/client/copy";
 import { loadLang, saveLang, type Lang } from "@/game/client/prefs";
 import type { God } from "@/game/engine/types";
@@ -21,6 +22,12 @@ const Ctx = createContext<I18n | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>("zh");
+
+  useEffect(() => {
+    const unlock = () => unlockAudio();
+    window.addEventListener("pointerdown", unlock);
+    return () => window.removeEventListener("pointerdown", unlock);
+  }, []);
 
   useEffect(() => {
     setLangState(loadLang());

@@ -3,12 +3,13 @@ import { randomInt, timingSafeEqual } from "node:crypto";
 import { getSql } from "@/lib/db";
 import { chooseBot } from "@/game/engine/bot.ts";
 import { applyCommand, createBattle } from "@/game/engine/battle.ts";
-import { CATALOG, SQUAD } from "@/game/engine/catalog.ts";
+import { CATALOG, PLAYABLE, SQUAD } from "@/game/engine/catalog.ts";
 import {
   applyPlayerRewards,
   assignPoint,
   botSquad,
   buildSummary,
+  ensurePlayable,
   freshRoster,
   listAbsorb,
   makeSaved,
@@ -37,6 +38,8 @@ type ApiResult = { ok: true; view: RoomView } | { ok: false; error: string; view
 interface RoomState {
   battle: Battle | null;
   recent: string[];
+  player?: Faction;
+  slots?: string[];
 }
 
 interface RoomRow {
@@ -89,7 +92,12 @@ function sameToken(a: string, b: string): boolean {
 
 function parseState(value: RoomState | string): RoomState {
   const state = typeof value === "string" ? (JSON.parse(value) as RoomState) : value;
-  return { battle: state.battle ?? null, recent: state.recent ?? [] };
+  return {
+    battle: state.battle ?? null,
+    recent: state.recent ?? [],
+    player: state.player,
+    slots: state.slots,
+  };
 }
 
 function parseRoster(value: unknown): Roster {
@@ -113,7 +121,7 @@ function parseRoster(value: unknown): Roster {
       field.push(makeSaved(id, `${id}-r${field.length}-${randomInt(0, 9999)}`));
     }
   });
-  return next;
+  return ensurePlayable(next);
 }
 
 async function sql() {
@@ -124,7 +132,19 @@ export async function ensureCommander(token: string): Promise<Roster> {
   if (!TOKEN.test(token)) throw new Error("身份无效");
   const db = await sql();
   const existing = await db.query<{ roster: Roster | string }>("select roster from commanders where token = $1", [token]);
-  if (existing[0]) return parseRoster(existing[0].roster);
+  if (existing[0]) {
+    const stored = existing[0].roster;
+    const raw = typeof stored === "string" ? (JSON.parse(stored) as Roster) : stored;
+    const before =
+      (raw?.imperial?.length ?? 0) +
+      (raw?.chaos?.length ?? 0) +
+      (raw?.imperialRes?.length ?? 0) +
+      (raw?.chaosRes?.length ?? 0);
+    const roster = parseRoster(stored);
+    const after = roster.imperial.length + roster.chaos.length + roster.imperialRes.length + roster.chaosRes.length;
+    if (after !== before) await saveRoster(token, roster);
+    return roster;
+  }
   const roster = freshRoster();
   await db.query(
     "insert into commanders (token, roster) values ($1, $2::jsonb) on conflict (token) do nothing",
@@ -162,7 +182,10 @@ async function loadRoom(code: string): Promise<RoomRow | null> {
 }
 
 function seatOf(room: RoomRow, token: string): Faction | null {
-  if (sameToken(room.host_token, token)) return "imperial";
+  if (sameToken(room.host_token, token)) {
+    if (room.mode === "skirmish") return parseState(room.state).player ?? "imperial";
+    return "imperial";
+  }
   if (room.guest_token && sameToken(room.guest_token, token)) return "chaos";
   return null;
 }
@@ -178,7 +201,7 @@ function toView(room: RoomRow, you: Faction | null): RoomView {
     version: Number(room.version),
     opponent: room.mode === "skirmish" ? true : Boolean(room.guest_token),
     battle,
-    absorb: battle && battle.status === "absorb" ? listAbsorb(battle) : [],
+    absorb: you === "imperial" && battle && battle.status === "absorb" ? listAbsorb(battle) : [],
   };
 }
 
@@ -201,7 +224,8 @@ async function finalize(room: RoomRow, state: RoomState, decisions: Record<strin
   if (!battle || battle.finalized || battle.status === "battle") return;
   const rng = serverRng();
   const host = await ensureCommander(room.host_token);
-  const hostResult = applyPlayerRewards(battle, host, "imperial", decisions, rng);
+  const hostFaction = state.player ?? "imperial";
+  const hostResult = applyPlayerRewards(battle, host, hostFaction, decisions, rng);
   await saveRoster(room.host_token, hostResult.roster);
   let lines = hostResult.lines;
   let gear = hostResult.gear;
@@ -221,7 +245,8 @@ async function finalize(room: RoomRow, state: RoomState, decisions: Record<strin
 async function settleIfReady(room: RoomRow, state: RoomState): Promise<void> {
   const battle = state.battle;
   if (!battle || battle.finalized || battle.status !== "absorb") return;
-  if (listAbsorb(battle).length === 0) await finalize(room, state, {});
+  const player = state.player ?? "imperial";
+  if (player !== "imperial" || listAbsorb(battle).length === 0) await finalize(room, state, {});
 }
 
 export async function createRoom(token: string): Promise<ApiResult> {
@@ -275,15 +300,37 @@ export async function joinRoom(token: string, code: string): Promise<ApiResult> 
   });
 }
 
-export async function createSkirmish(token: string): Promise<ApiResult> {
+export async function createSkirmish(token: string, faction: Faction, slots: string[]): Promise<ApiResult> {
   if (!TOKEN.test(token)) return { ok: false, error: "身份无效" };
+  if (!Array.isArray(slots) || slots.length !== 5 || new Set(slots).size !== 5) {
+    return { ok: false, error: "请选择五名不同角色" };
+  }
   const roster = await ensureCommander(token);
+  const pool = [
+    ...(faction === "imperial" ? roster.imperial : roster.chaos),
+    ...(faction === "imperial" ? roster.imperialRes : roster.chaosRes),
+  ];
+  const picked: SavedUnit[] = [];
+  for (const id of slots) {
+    const unit = pool.find((entry) => entry.instanceId === id);
+    if (!unit || unit.fallen || unit.faction !== faction || !PLAYABLE[faction].includes(unit.defId)) {
+      return { ok: false, error: "阵容里有不能出战的角色" };
+    }
+    picked.push(unit);
+  }
   await sweep();
   const db = await sql();
+  const level = avgLevel(picked);
+  const imperial = faction === "imperial" ? picked : botSquad(level, "imperial", serverRng());
+  const chaos = faction === "chaos" ? picked : botSquad(level, "chaos", serverRng());
   for (let i = 0; i < 6; i += 1) {
     const code = makeCode();
-    const battle = createBattle(roster.imperial, botSquad(avgLevel(roster.imperial)), serverRng());
-    const state: RoomState = { battle, recent: [] };
+    const state: RoomState = {
+      battle: createBattle(imperial, chaos, serverRng()),
+      recent: [],
+      player: faction,
+      slots: [...slots],
+    };
     try {
       await db.query(
         "insert into rooms (code, mode, host_token, guest_token, version, state) values ($1, 'skirmish', $2, null, 1, $3::jsonb)",
@@ -291,7 +338,7 @@ export async function createSkirmish(token: string): Promise<ApiResult> {
       );
       const room = await loadRoom(code);
       if (!room) return { ok: false, error: "演练创建失败" };
-      return { ok: true, view: toView(room, "imperial") };
+      return { ok: true, view: toView(room, faction) };
     } catch {
       // retry code
     }
@@ -383,7 +430,8 @@ export async function act(token: string, code: string, version: number, actionId
     const battle = state.battle;
     if (!battle) return "对手还未进入";
     if (command.kind === "crisis") {
-      if (seat !== "imperial") return "只有帝国指挥官可以回应腐化";
+      const unit = battle.units.find((u) => u.instanceId === command.actorId);
+      if (!unit || unit.owner !== seat) return "不能替对方做临界抉择";
     } else if (command.kind === "end") {
       if (battle.phase !== seat) return "还没轮到你的阵营";
     } else {
@@ -399,9 +447,21 @@ export async function act(token: string, code: string, version: number, actionId
 
 export async function botAct(token: string, code: string, version: number, actionId: string): Promise<ApiResult> {
   return mutate(token, code, version, actionId, async (room, state, seat) => {
-    if (room.mode !== "skirmish" || seat !== "imperial") return "这里没有自动指挥的混沌军团";
+    if (room.mode !== "skirmish") return "这里没有自动指挥的对手";
+    const player = parseState(room.state).player ?? "imperial";
+    if (seat !== player) return "这里没有自动指挥的对手";
     const battle = state.battle;
     if (!battle) return "战斗尚未开始";
+    if (battle.status !== "battle") return "NOOP";
+    if (battle.prompt) {
+      const unit = battle.units.find((u) => u.instanceId === battle.prompt?.unitId);
+      if (!unit || unit.owner === player) return "NOOP";
+      const result = applyCommand(battle, { kind: "crisis", actorId: unit.instanceId, choice: "purify" }, serverRng());
+      if (result.error) return result.error;
+      state.battle = result.battle;
+      return null;
+    }
+    if (battle.phase === player) return "NOOP";
     const command = chooseBot(battle);
     if (!command) return "NOOP";
     const result = applyCommand(battle, command, serverRng());
@@ -419,6 +479,11 @@ export async function absorb(
   decisions: { instanceId: string; mode: "purify" | "absorb" }[],
 ): Promise<ApiResult> {
   return mutate(token, code, version, actionId, async (_room, state, seat) => {
+    const player = state.player ?? "imperial";
+    if (_room.mode === "skirmish" && player !== "imperial") {
+      await finalize(_room, state, {});
+      return null;
+    }
     if (seat !== "imperial") return "只有帝国指挥官可以选择净化或吸收";
     const battle = state.battle;
     if (!battle || battle.status !== "absorb") return "现在不能结算战利品";
@@ -436,13 +501,28 @@ export async function rematch(token: string, code: string, version: number, acti
     const battle = state.battle;
     if (!battle || battle.status !== "finished") return "战斗尚未结算";
     battle.rematch[seat] = true;
-    const ready = room.mode === "skirmish" ? battle.rematch.imperial : battle.rematch.imperial && battle.rematch.chaos;
+    const ready = room.mode === "skirmish" ? battle.rematch[state.player ?? "imperial"] : battle.rematch.imperial && battle.rematch.chaos;
     if (!ready) return null;
     const host = await ensureCommander(room.host_token);
-    const chaos =
-      room.mode === "skirmish"
-        ? botSquad(avgLevel(host.imperial))
-        : (await ensureCommander(room.guest_token ?? "")).chaos;
+    if (room.mode === "skirmish") {
+      const faction = state.player ?? "imperial";
+      const pool = [
+        ...(faction === "imperial" ? host.imperial : host.chaos),
+        ...(faction === "imperial" ? host.imperialRes : host.chaosRes),
+      ];
+      const rebuilt = (state.slots ?? [])
+        .map((id) => pool.find((unit) => unit.instanceId === id))
+        .filter((unit): unit is SavedUnit => Boolean(unit));
+      const picked = rebuilt.length === 5 ? rebuilt : faction === "imperial" ? host.imperial : host.chaos;
+      const level = avgLevel(picked);
+      state.battle = createBattle(
+        faction === "imperial" ? picked : botSquad(level, "imperial", serverRng()),
+        faction === "chaos" ? picked : botSquad(level, "chaos", serverRng()),
+        serverRng(),
+      );
+      return null;
+    }
+    const chaos = (await ensureCommander(room.guest_token ?? "")).chaos;
     state.battle = createBattle(host.imperial, chaos, serverRng());
     return null;
   });

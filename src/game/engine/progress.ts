@@ -1,4 +1,4 @@
-import { CATALOG, FALLEN, GOD_LABEL, RELICS, SQUAD } from "./catalog.ts";
+import { CATALOG, FALLEN, GOD_LABEL, PLAYABLE, RELICS, SQUAD } from "./catalog.ts";
 import type {
   Battle,
   BattleSummary,
@@ -124,21 +124,62 @@ export function makeSaved(defId: string, instanceId = defId): SavedUnit {
 }
 
 export function freshRoster(): Roster {
-  return {
+  return ensurePlayable({
     imperial: SQUAD.imperial.map((id) => makeSaved(id)),
     chaos: SQUAD.chaos.map((id) => makeSaved(id)),
     imperialRes: [],
     chaosRes: [],
-  };
+  });
 }
 
-export function botSquad(level: number): SavedUnit[] {
-  return SQUAD.chaos.map((id) => {
+export function ensurePlayable(roster: Roster): Roster {
+  for (const faction of ["imperial", "chaos"] as const) {
+    const reserve = faction === "imperial" ? roster.imperialRes : roster.chaosRes;
+    const field = faction === "imperial" ? roster.imperial : roster.chaos;
+    const have = new Set([...field, ...reserve].map((unit) => unit.defId));
+    for (const id of PLAYABLE[faction]) {
+      if (have.has(id)) continue;
+      reserve.push(makeSaved(id, `${id}-res`));
+      have.add(id);
+    }
+  }
+  return roster;
+}
+
+export function tankScore(unit: SavedUnit): number {
+  const stats = deriveStats(unit);
+  return stats.hp + stats.def * 2;
+}
+
+/** Two toughest fighters take the front. The other three keep their order behind them. */
+export function placeTanks(units: SavedUnit[]): SavedUnit[] {
+  const front = [...units]
+    .sort((a, b) => tankScore(b) - tankScore(a) || a.defId.localeCompare(b.defId))
+    .slice(0, 2);
+  const frontIds = new Set(front.map((unit) => unit.instanceId));
+  return [...front, ...units.filter((unit) => !frontIds.has(unit.instanceId))];
+}
+
+export function botSquad(level: number, faction: Faction = "chaos", rng?: Rng): SavedUnit[] {
+  const ids = rng ? drawFive(PLAYABLE[faction], rng) : SQUAD[faction];
+  const units = ids.map((id) => {
     const unit = makeSaved(id, `bot:${id}`);
     unit.level = Math.min(20, Math.max(1, level));
     syncMilestones(unit);
     return unit;
   });
+  return placeTanks(units);
+}
+
+function drawFive(pool: readonly string[], rng: Rng): string[] {
+  const bag = [...pool];
+  for (let i = bag.length - 1; i > 0; i -= 1) {
+    const j = rng.int(i + 1);
+    const swap = bag[i] ?? bag[0];
+    bag[i] = bag[j] ?? swap;
+    bag[j] = swap;
+  }
+  return bag.slice(0, 5);
 }
 
 export function assignPoint(unit: SavedUnit, stat: "hp" | "atk" | "def"): string | null {
@@ -177,6 +218,7 @@ export interface AbsorbRow {
 }
 
 export function listAbsorb(battle: Battle): AbsorbRow[] {
+  // Dead units still settle loot they already earned. Survival XP (+12) is separate and only if alive.
   return battle.units
     .filter(
       (u) =>

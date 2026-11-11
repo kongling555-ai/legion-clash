@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { CATALOG, FALLEN, FALLEN_PASSIVE, GOD_LABEL } from "@/game/engine/catalog";
+import { CATALOG, FALLEN, FALLEN_PASSIVE, GOD_LABEL, portraitOf } from "@/game/engine/catalog";
 import { corruptionStage, deriveStats, rarityLabel, xpToNext } from "@/game/engine/progress";
 import type { Faction, Roster, SavedUnit } from "@/game/engine/types";
 import { getRoster, spendPoint, swapUnit } from "@/game/server/api";
@@ -58,43 +58,47 @@ export function RosterScreen() {
       <div className="mt-4 grid grid-cols-2 gap-2">
         <button
           type="button"
-          onClick={() => setFaction("imperial")}
+          onClick={() => {
+            setFaction("imperial");
+            setReserveId(null);
+            setPicked(roster?.imperial[0]?.instanceId ?? null);
+          }}
           className={faction === "imperial" ? "min-h-11 rounded-md bg-gold text-void" : "min-h-11 rounded-md border border-line"}
         >
           {t.imperial}
         </button>
         <button
           type="button"
-          onClick={() => setFaction("chaos")}
+          onClick={() => {
+            setFaction("chaos");
+            setReserveId(null);
+            setPicked(roster?.chaos[0]?.instanceId ?? null);
+          }}
           className={faction === "chaos" ? "min-h-11 rounded-md bg-warp text-ivory" : "min-h-11 rounded-md border border-line"}
         >
           {t.chaos}
         </button>
       </div>
-      <div className="mt-4 flex gap-2 overflow-x-auto pb-2">
+      <p className="mt-4 text-xs text-muted">
+        {t.field} {field.length} · {t.reserve} {reserve.length}
+      </p>
+      <div className="mt-2 grid grid-cols-3 gap-2">
         {field.map((entry) => (
-          <button key={entry.instanceId} type="button" onClick={() => void (reserveId ? swap(entry.instanceId) : setPicked(entry.instanceId))} className="w-24 shrink-0">
+          <button key={entry.instanceId} type="button" onClick={() => void (reserveId ? swap(entry.instanceId) : setPicked(entry.instanceId))}>
             <Portrait unit={entry} active={unit?.instanceId === entry.instanceId} />
           </button>
         ))}
       </div>
-      {reserve.length ? (
-        <div className="mt-2">
-          <p className="text-xs text-muted">{reserveId ? t.swapHint : t.reserve}</p>
-          <div className="mt-2 flex gap-2 overflow-x-auto">
-            {reserve.map((entry) => (
-              <button
-                key={entry.instanceId}
-                type="button"
-                onClick={() => setReserveId(entry.instanceId)}
-                className="w-20 shrink-0"
-              >
-                <Portrait unit={entry} active={reserveId === entry.instanceId} />
-              </button>
-            ))}
-          </div>
+      <div className="mt-4">
+        <p className="text-xs text-muted">{reserveId ? t.swapHint : t.reserve}</p>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          {reserve.map((entry) => (
+            <button key={entry.instanceId} type="button" onClick={() => setReserveId(entry.instanceId)}>
+              <Portrait unit={entry} active={reserveId === entry.instanceId} />
+            </button>
+          ))}
         </div>
-      ) : null}
+      </div>
       {unit ? <Detail unit={unit} onPoint={(stat) => void point(stat)} /> : null}
       {error ? <p className="mt-3 text-sm text-blood">{tx(error)}</p> : null}
     </main>
@@ -105,7 +109,7 @@ function Portrait({ unit, active }: { unit: SavedUnit; active: boolean }) {
   const { tx } = useI18n();
   return (
     <span className={active ? "block overflow-hidden rounded-md border border-gold" : "block overflow-hidden rounded-md border border-line"}>
-      <img src={`/portraits/${unit.defId}.jpg`} alt="" className="aspect-[2/3] w-full object-cover" />
+      <img src={`/portraits/${portraitOf(unit.defId)}.jpg`} alt="" className="aspect-[2/3] w-full object-cover" />
       <span className="block truncate px-1 py-1 text-xs">{tx(unit.name)}</span>
     </span>
   );

@@ -63,10 +63,16 @@ export const joinRoom = createServerFn({ method: "POST" })
   });
 
 export const createSkirmish = createServerFn({ method: "POST" })
-  .validator(z.object({ token }))
+  .validator(
+    z.object({
+      token,
+      faction: z.enum(["imperial", "chaos"]),
+      slots: z.array(z.string().min(1).max(80)).length(5),
+    }),
+  )
   .handler(async ({ data }) => {
     const { createSkirmish: run } = await import("./logic.server.ts");
-    return run(data.token);
+    return run(data.token, data.faction, data.slots);
   });
 
 export const getRoom = createServerFn({ method: "POST" })
